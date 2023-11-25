@@ -1,0 +1,131 @@
+---
+- name: Descarga agente en local
+  hosts: localhost
+  vars_files:
+    - globals_vars.yaml
+ 
+  tasks:
+    - name: Compone nombre del paquete msi de la nueva versión - zabbix_agent2-{{zabbix_agent_version}}.msi para poder realizar la descarga
+      set_fact:
+        msi_new: "zabbix_agent2-{{zabbix_agent_version}}.msi"  
+
+    - name: Descargar la última versión del agente Zabbix MSI - {{zabbix_agent_version}}
+      get_url:
+        url: "{{pagina_descarga}}"
+        dest: "{{path_msi}}/{{msi_new}}"
+  
+- name: Actualizar Agente Zabbix en Windows con MSI
+  hosts: windows
+  gather_facts: true
+  vars_files:
+    - globals_vars.yaml
+  
+  tasks:
+   
+    - name: Crea directorio de Descarga
+      win_file:
+        path: C:\Temp
+        state: directory
+
+    - name: Copia paquete msi a host destino
+      win_copy:
+        src: "{{path_msi}}/{{msi_new}}"
+        dest: "{{path_msi_win}}"
+        force: yes
+
+    - name: Obtener la versión actual del agente Zabbix instalado
+      win_shell: |
+        $agentPath = "C:\Program Files\Zabbix Agent 2\zabbix_agent2.exe"
+        if (Test-Path $agentPath) {
+        Get-Command $agentPath | ForEach-Object { $_.FileVersionInfo.ProductVersion }
+        } else {
+        Write-Output "Agent not installed"
+        }
+      register: current_version
+      changed_when: false
+
+       
+    - name: Si el agente no está instalado
+      block:
+        - name: Validando si el agente está instalado...
+          debug:
+            msg: "Zabbix Aggent 2 NO INSTALADO, Se va a proceder a instalar por primera vez..."
+            
+      when: current_version.stdout_lines[0] == "Agent not installed"
+    
+    - name: Validando si el agente está instalado...
+      debug:
+        msg: "Hay una versión de Zabbix Aggent 2 instalada , Se va a proceder a realizar el UPDATE..."
+            
+      when: current_version.stdout_lines[0] != "Agent not installed"
+     
+   
+    - name: Comprobando si la nueva version ya esta instalada...
+      debug:
+        msg:  "Ambas versiones son iguales {{current_version.stdout_lines[0]}} == {{zabbix_agent_version}}, por lo tanto no se ejecuta la instalación"
+      when: current_version.stdout_lines[0] == zabbix_agent_version
+
+    - name: Detener el servicio Zabbix Agent 2 si hay agente previamente instalado y las versiones son diferentes
+      win_service:
+        name: Zabbix Agent 2
+        state: stopped
+      when: current_version.stdout_lines[0] != "Agent not installed" and current_version.stdout_lines[0] != zabbix_agent_version   
+
+    - name: Muestra versión actual del agente instalado
+      debug:
+        msg:  "Versión actual instalada -> {{current_version.stdout_lines[0]}}"
+        
+    - name: Muestra nueva version a instalar
+      debug:
+        msg: "Nueva versión a instalar -> {{zabbix_agent_version}}"
+
+    - name: Comienza la instalación del Zabbix Agent 2...
+      block:
+        - name: Si no existe Zabbix Agent 2 instalado...
+          block:
+          - name: Compone nombre del paquete msi de la version actual instalada - zabbix_agent2-{{current_version.stdout_lines[0]}}.msi para poder realizar la desinstalacion
+            set_fact:
+             msi_old: zabbix_agent2-{{current_version.stdout_lines[0]}}.msi
+
+          - name: Desinstalar agente Zabbix
+            ansible.windows.win_package:
+              path: "C:\\Temp\\{{msi_old}}"
+              state: absent
+          when: current_version.stdout_lines[0] != "Agent not installed"
+
+     
+        - name: Instalar el agente Zabbix {{zabbix_agent_version}}
+          win_command: msiexec /i C:\Temp\{{msi_new}} /qn^ Server={{servidor_zabbix}} SERVERACTIVE={{servidor_zabbix}} SKIP=fw /l*v {{logs_de_instalacion}}\izabbix_agent2-{{msi_new}}-adm64.log
+
+
+        - name: Modificando archivo de configuracion zabbix.agent2.conf...
+          community.windows.win_lineinfile:
+            path: "C:\\Program Files\\Zabbix Agent 2\\zabbix_agent2.conf"
+            line: '{{item.line}}' 
+            regexp: '{{item.regexp}}'
+          loop:
+            - regexp: '^Hostname='
+              line: "Hostname={{ansible_hostname}}"
+            - regexp: '^UnsafeUserParameters='
+              line: "UnsafeUserParameters=1"
+            - regexp: '^Timeout='
+              line: "Timeout=30"
+            - regexp: '^HostMetadata='
+              line: "HostMetadata={{ansible_hostname}}"
+            - regexp: '^HostMetadataItem='
+              line: "HostMetadataItem=system.uname"
+        
+        - name: Añadir AllowKey al fichero zabbix.agent2.conf
+          community.windows.win_lineinfile:
+            path: "C:\\Program Files\\Zabbix Agent 2\\zabbix_agent2.conf"
+            insertbefore: '^DenyKey=system.run\[\*\]'
+            line: 'AllowKey=system.run[*]'
+        
+
+        - name: Reiniciar el servicio Zabbix Agent
+          win_service:
+           name: Zabbix Agent 2
+           state: restarted
+      when: current_version.stdout_lines[0] != zabbix_agent_version
+    
+    
