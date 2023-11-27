@@ -21,6 +21,46 @@
     - globals_vars.yaml
   
   tasks:
+    - name: Obtener la versión actual del agente Zabbix instalado
+      win_shell: |
+        $agentPath = "C:\Program Files\Zabbix Agent 2\zabbix_agent2.exe"
+        if (Test-Path $agentPath) {
+        Get-Command $agentPath | ForEach-Object { $_.FileVersionInfo.ProductVersion }
+        } else {
+        Write-Output "Agent not installed"
+        }
+      register: current_version
+      changed_when: false
+
+    - name: Verifica si existe el paquete msi a desinstalar
+      block:
+        - name: Muestra versión actual del agente instalado
+          debug:
+          msg:  "Versión actual instalada -> {{current_version.stdout_lines[0]}}"
+        
+        - name: Compone nombre del paquete msi de la version actual instalada - zabbix_agent2-{{current_version.stdout_lines[0]}}.msi para poder realizar la desinstalacion
+          set_fact:
+           msi_old: zabbix_agent2-{{current_version.stdout_lines[0]}}.msi
+
+      
+        - name: Existe paquete msi para proceder con la desinstalacion?
+          win_stat:
+          path: "C:\\ruta\\al\\{{msi_old}}"
+          register: msi_old_info
+
+      
+        # - name: Imprimir resultado
+        #   debug:
+        #    var: archivo_info.stat.exists
+
+        - name: Copia versión actual del msi {{msi_old}} del repositorio , para proceder con su desistalacióñ
+          win_copy:
+            src: "{{path_msi}}/{{msi_old}}"
+            dest: "{{path_msi_win}}"
+            force: yes
+          when: msi_old_info == false
+      when: current_version != "Agent not installed" #Agente instalado
+
    
     - name: Crea directorio de Descarga
       win_file:
@@ -33,18 +73,7 @@
         dest: "{{path_msi_win}}"
         force: yes
 
-    - name: Obtener la versión actual del agente Zabbix instalado
-      win_shell: |
-        $agentPath = "C:\Program Files\Zabbix Agent 2\zabbix_agent2.exe"
-        if (Test-Path $agentPath) {
-        Get-Command $agentPath | ForEach-Object { $_.FileVersionInfo.ProductVersion }
-        } else {
-        Write-Output "Agent not installed"
-        }
-      register: current_version
-      changed_when: false
-
-       
+      
     - name: Si el agente no está instalado
       block:
         - name: Validando si el agente está instalado...
@@ -71,9 +100,7 @@
         state: stopped
       when: current_version.stdout_lines[0] != "Agent not installed" and current_version.stdout_lines[0] != zabbix_agent_version   
 
-    - name: Muestra versión actual del agente instalado
-      debug:
-        msg:  "Versión actual instalada -> {{current_version.stdout_lines[0]}}"
+   
         
     - name: Muestra nueva version a instalar
       debug:
@@ -83,9 +110,9 @@
       block:
         - name: Si no existe Zabbix Agent 2 instalado...
           block:
-          - name: Compone nombre del paquete msi de la version actual instalada - zabbix_agent2-{{current_version.stdout_lines[0]}}.msi para poder realizar la desinstalacion
-            set_fact:
-             msi_old: zabbix_agent2-{{current_version.stdout_lines[0]}}.msi
+          # - name: Compone nombre del paquete msi de la version actual instalada - zabbix_agent2-{{current_version.stdout_lines[0]}}.msi para poder realizar la desinstalacion
+          #   set_fact:
+          #    msi_old: zabbix_agent2-{{current_version.stdout_lines[0]}}.msi
 
           - name: Desinstalar agente Zabbix
             ansible.windows.win_package:
@@ -96,7 +123,7 @@
      
         - name: Instalar el agente Zabbix {{zabbix_agent_version}}
           win_command: msiexec /i C:\Temp\{{msi_new}} /qn^ Server={{servidor_zabbix}} SERVERACTIVE={{servidor_zabbix}} SKIP=fw /l*v {{logs_de_instalacion}}\izabbix_agent2-{{msi_new}}-adm64.log
-
+          #probar con el modulo win_package
 
         - name: Modificando archivo de configuracion zabbix.agent2.conf...
           community.windows.win_lineinfile:
