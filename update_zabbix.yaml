@@ -21,6 +21,17 @@
     - globals_vars.yaml
   
   tasks:
+    - name: Crea directorio de descarga en host destino
+      win_file:
+        path: C:\Temp
+        state: directory
+
+    - name: Copia paquete msi a host destino
+      win_copy:
+        src: "{{path_msi}}/{{msi_new}}"
+        dest: "{{path_msi_win}}"
+        force: yes
+
     - name: Obtener la versión actual del agente Zabbix instalado
       win_shell: |
         $agentPath = "C:\Program Files\Zabbix Agent 2\zabbix_agent2.exe"
@@ -32,11 +43,11 @@
       register: current_version
       changed_when: false
 
-    - name: Verifica si existe el paquete msi a desinstalar
+    - name: Verifica si existe el paquete msi a desinstalar #El paquete msi a desinstalar debe existir necesariamente.
       block:
         - name: Muestra versión actual del agente instalado
           debug:
-          msg:  "Versión actual instalada -> {{current_version.stdout_lines[0]}}"
+           msg:  "Versión actual instalada -> {{current_version.stdout_lines[0]}}"
         
         - name: Compone nombre del paquete msi de la version actual instalada - zabbix_agent2-{{current_version.stdout_lines[0]}}.msi para poder realizar la desinstalacion
           set_fact:
@@ -45,33 +56,24 @@
       
         - name: Existe paquete msi para proceder con la desinstalacion?
           win_stat:
-          path: "C:\\ruta\\al\\{{msi_old}}"
+           path: "C:\\ruta\\al\\{{msi_old}}"
           register: msi_old_info
 
       
         # - name: Imprimir resultado
         #   debug:
-        #    var: archivo_info.stat.exists
+        #    var: msi_old_info.stat.exists
 
         - name: Copia versión actual del msi {{msi_old}} del repositorio , para proceder con su desistalacióñ
           win_copy:
             src: "{{path_msi}}/{{msi_old}}"
             dest: "{{path_msi_win}}"
             force: yes
-          when: msi_old_info == false
+          when: msi_old_info.stat.exists == false
       when: current_version != "Agent not installed" #Agente instalado
 
    
-    - name: Crea directorio de Descarga
-      win_file:
-        path: C:\Temp
-        state: directory
-
-    - name: Copia paquete msi a host destino
-      win_copy:
-        src: "{{path_msi}}/{{msi_new}}"
-        dest: "{{path_msi_win}}"
-        force: yes
+    
 
       
     - name: Si el agente no está instalado
@@ -100,20 +102,16 @@
         state: stopped
       when: current_version.stdout_lines[0] != "Agent not installed" and current_version.stdout_lines[0] != zabbix_agent_version   
 
-   
-        
+           
     - name: Muestra nueva version a instalar
       debug:
         msg: "Nueva versión a instalar -> {{zabbix_agent_version}}"
 
     - name: Comienza la instalación del Zabbix Agent 2...
       block:
-        - name: Si no existe Zabbix Agent 2 instalado...
+        - name: Si existe Zabbix Agent 2 instalado...
           block:
-          # - name: Compone nombre del paquete msi de la version actual instalada - zabbix_agent2-{{current_version.stdout_lines[0]}}.msi para poder realizar la desinstalacion
-          #   set_fact:
-          #    msi_old: zabbix_agent2-{{current_version.stdout_lines[0]}}.msi
-
+         
           - name: Desinstalar agente Zabbix
             ansible.windows.win_package:
               path: "C:\\Temp\\{{msi_old}}"
@@ -122,8 +120,13 @@
 
      
         - name: Instalar el agente Zabbix {{zabbix_agent_version}}
-          win_command: msiexec /i C:\Temp\{{msi_new}} /qn^ Server={{servidor_zabbix}} SERVERACTIVE={{servidor_zabbix}} SKIP=fw /l*v {{logs_de_instalacion}}\izabbix_agent2-{{msi_new}}-adm64.log
+          #win_command: msiexec /i C:\Temp\{{msi_new}} /qn^ Server={{servidor_zabbix}} SERVERACTIVE={{servidor_zabbix}} SKIP=fw /l*v {{logs_de_instalacion}}\izabbix_agent2-{{msi_new}}-adm64.log
           #probar con el modulo win_package
+          win_package:
+            path: "c:\\Temp\\{{msi_new}}"
+            arguments:  /qn^ Server={{servidor_zabbix}} SERVERACTIVE={{servidor_zabbix}} SKIP=fw /l*v {{logs_de_instalacion}}\izabbix_agent2-{{msi_new}}-adm64.log
+            state: present
+
 
         - name: Modificando archivo de configuracion zabbix.agent2.conf...
           community.windows.win_lineinfile:
